@@ -68,7 +68,7 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         return it->second;
     };
 
-    cells_arr[KV_CELLS_TYPE_BASE].reset(new kv_cells(kv_size));
+    cells_map[KV_CELLS_TYPE_BASE].reset(new kv_cells(kv_size));
 
     layers.resize(n_layer);
 
@@ -116,7 +116,7 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         ggml_format_name(k, "cache_k_l%d", i);
         ggml_format_name(v, "cache_v_l%d", i);
 
-        layer.cells = cells_arr[KV_CELLS_TYPE_BASE].get();
+        layer.cells = cells_map.at(KV_CELLS_TYPE_BASE).get();
 
         layer.k = k;
         layer.v = v;
@@ -168,7 +168,7 @@ void llama_kv_cache_unified::kv_cells::clear() {
 }
 
 void llama_kv_cache_unified::clear() {
-    for (auto & cells : cells_arr) {
+    for (auto & [_, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -227,7 +227,7 @@ bool llama_kv_cache_unified::kv_cells::seq_rm(llama_seq_id seq_id, llama_pos p0,
 bool llama_kv_cache_unified::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
     bool res = true;
 
-    for (auto & cells : cells_arr) {
+    for (auto & [_, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -262,7 +262,7 @@ void llama_kv_cache_unified::kv_cells::seq_cp(llama_seq_id seq_id_src, llama_seq
 }
 
 void llama_kv_cache_unified::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
-    for (auto & cells : cells_arr) {
+    for (auto & [_, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -299,7 +299,7 @@ void llama_kv_cache_unified::kv_cells::seq_keep(llama_seq_id seq_id) {
 }
 
 void llama_kv_cache_unified::seq_keep(llama_seq_id seq_id) {
-    for (auto & cells : cells_arr) {
+    for (auto & [_, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -358,7 +358,7 @@ bool llama_kv_cache_unified::kv_cells::seq_add(llama_seq_id seq_id, llama_pos p0
 }
 
 void llama_kv_cache_unified::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos delta) {
-    auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     has_shift = cells->seq_add(seq_id, p0, p1, delta);
 }
@@ -399,7 +399,7 @@ bool llama_kv_cache_unified::kv_cells::seq_div(llama_seq_id seq_id, llama_pos p0
 }
 
 void llama_kv_cache_unified::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {
-    auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     has_shift = cells->seq_div(seq_id, p0, p1, d);
 }
@@ -417,7 +417,7 @@ llama_pos llama_kv_cache_unified::kv_cells::seq_pos_max(llama_seq_id seq_id) con
 }
 
 llama_pos llama_kv_cache_unified::seq_pos_max(llama_seq_id seq_id) const {
-    auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     return cells->seq_pos_max(seq_id);
 }
@@ -450,7 +450,7 @@ void llama_kv_cache_unified::kv_cells::restore() {
 }
 
 void llama_kv_cache_unified::restore() {
-    for (auto & cells : cells_arr) {
+    for (auto & [_, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -470,7 +470,7 @@ void llama_kv_cache_unified::kv_cells::commit() {
 }
 
 void llama_kv_cache_unified::commit() {
-    for (auto & cells : cells_arr) {
+    for (auto & [_, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -509,7 +509,7 @@ bool llama_kv_cache_unified::update(llama_context & lctx) {
         }
 
         {
-            auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+            auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
             has_shift = false;
 
@@ -545,7 +545,7 @@ bool llama_kv_cache_unified::update(llama_context & lctx) {
 }
 
 void llama_kv_cache_unified::defrag_sched(float thold) {
-    auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     // - do not defrag small contexts (i.e. < 2048 tokens)
     // - count the padding towards the number of used tokens
@@ -560,7 +560,7 @@ void llama_kv_cache_unified::defrag_sched(float thold) {
 }
 
 void llama_kv_cache_unified::set_full() {
-    for (auto & cells : cells_arr) {
+    for (auto & [_, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -653,7 +653,7 @@ bool llama_kv_cache_unified::kv_cells::find_slot(const llama_ubatch & ubatch, ui
 bool llama_kv_cache_unified::find_slot(const llama_ubatch & ubatch) {
     bool res = true;
 
-    for (auto & cells : cells_arr) {
+    for (auto & [it, cells] : cells_map) {
         if (!cells) {
             continue;
         }
@@ -665,7 +665,7 @@ bool llama_kv_cache_unified::find_slot(const llama_ubatch & ubatch) {
 }
 
 int32_t llama_kv_cache_unified::get_n_tokens() const {
-    const auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     int32_t result = 0;
 
@@ -677,7 +677,7 @@ int32_t llama_kv_cache_unified::get_n_tokens() const {
 }
 
 int32_t llama_kv_cache_unified::get_used_cells() const {
-    const auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     return cells->used;
 }
@@ -691,12 +691,12 @@ const llama_kv_cache_unified::kv_layer & llama_kv_cache_unified::get_layer(int32
 }
 
 uint32_t llama_kv_cache_unified::n_base() const {
-    return cells_arr[KV_CELLS_TYPE_BASE]->n;
+    return cells_map.at(KV_CELLS_TYPE_BASE)->n;
 }
 
 uint32_t llama_kv_cache_unified::n_swa() const {
 #pragma messages("FIX MEEEEEEEEEEEEEEEEEE")
-    return cells_arr[KV_CELLS_TYPE_BASE]->n;
+    return cells_map.at(KV_CELLS_TYPE_BASE)->n;
 }
 
 void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const {
@@ -707,7 +707,7 @@ void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ub
     GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
     float * data = (float *) dst->data;
 
-    const auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     const int64_t n_kv = cells->n;
 
@@ -772,7 +772,7 @@ void llama_kv_cache_unified::set_input_kq_mask_swa(ggml_tensor * dst, const llam
     float * data_swa = (float *) dst->data;
 
 #pragma messages("FIX MEEEEEEEEEEEEEEEEEE")
-    const auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     const int64_t n_kv = cells->n;
 
@@ -831,7 +831,7 @@ void llama_kv_cache_unified::set_input_kq_mask_swa(ggml_tensor * dst, const llam
 void llama_kv_cache_unified::set_input_k_shift(ggml_tensor * dst) const {
     GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
 
-    const auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     int32_t * data = (int32_t *) dst->data;
 
@@ -848,7 +848,7 @@ void llama_kv_cache_unified::set_input_pos_bucket(ggml_tensor * dst, const llama
 
     int32_t * data = (int32_t *) dst->data;
 
-    const auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     const int64_t n_kv = cells->n;
 
@@ -862,7 +862,7 @@ void llama_kv_cache_unified::set_input_pos_bucket(ggml_tensor * dst, const llama
 }
 
 llama_pos llama_kv_cache_unified::get_pos_max() const {
-    const auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     llama_pos pos_max = -1;
 
@@ -1166,7 +1166,7 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
 bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
     const uint32_t n_layer = hparams.n_layer;
 
-    auto & cells = cells_arr[KV_CELLS_TYPE_BASE];
+    const auto & cells = cells_map.at(KV_CELLS_TYPE_BASE);
 
     const uint32_t n_kv   = cells->cell_max();
     const uint32_t n_used = cells->used;

@@ -7,6 +7,7 @@
 
 #include "ggml-cpp.h"
 
+#include <map>
 #include <set>
 #include <vector>
 
@@ -237,14 +238,12 @@ private:
     enum kv_cells_type {
         KV_CELLS_TYPE_BASE = 0,
         KV_CELLS_TYPE_SWA,
-        KV_CELLS_TYPE_COUNT,
     };
 
-    std::array<std::unique_ptr<kv_cells>, KV_CELLS_TYPE_COUNT> cells_arr;
+    std::map<kv_cells_type, std::unique_ptr<kv_cells>> cells_map;
 
     std::vector<kv_layer> layers;
 
-private:
     const llama_model & model;
     const llama_hparams & hparams;
 
