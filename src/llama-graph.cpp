@@ -1024,7 +1024,7 @@ ggml_tensor * llm_graph_context::build_inp_pos_bucket_dec() const {
 
     auto inp = std::make_unique<llm_graph_input_pos_bucket_kv>(hparams, kv_self);
 
-    const auto n_kv = kv_self->n_base();
+    const auto n_kv = kv_self->n;
 
     auto & cur = inp->pos_bucket;
 
@@ -1241,7 +1241,7 @@ llm_graph_input_attn_kv_unified * llm_graph_context::build_attn_inp_kv_unified()
     auto inp = std::make_unique<llm_graph_input_attn_kv_unified>(hparams, cparams, kv_self);
 
     {
-        const auto n_kv = kv_self->n_base();
+        const auto n_kv = kv_self->n;
 
         inp->self_kq_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
         //cb(inp->self_kq_mask, "KQ_mask", -1);
@@ -1253,7 +1253,7 @@ llm_graph_input_attn_kv_unified * llm_graph_context::build_attn_inp_kv_unified()
     if (hparams.n_swa_pattern > 1) {
         GGML_ASSERT(hparams.n_swa > 0);
 
-        const auto n_kv = kv_self->n_swa();
+        const auto n_kv = kv_self->n;
 
         inp->self_kq_mask_swa = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
         //cb(inp->self_kq_mask_swa, "KQ_mask_swa", -1);
@@ -1298,9 +1298,9 @@ ggml_tensor * llm_graph_context::build_attn(
 
     // store to KV cache
     {
-        const auto kv_head = kv_layer.cells->head;
+        const auto kv_head = kv_self->head;
 
-        GGML_ASSERT(kv_layer.cells->size == n_ctx);
+        GGML_ASSERT(kv_self->size == n_ctx);
 
         ggml_tensor * k_cache_view = ggml_view_1d(ctx0, kv_layer.k, n_tokens*n_embd_k_gqa, ggml_row_size(kv_layer.k->type, n_embd_k_gqa)*kv_head);
         //cb(k_cache_view, "k_cache_view", il);
@@ -1332,7 +1332,7 @@ ggml_tensor * llm_graph_context::build_attn(
 
     const auto & kq_mask = is_swa ? inp->get_kq_mask_swa() : inp->get_kq_mask();
 
-    const auto n_kv = kv_layer.cells->n;
+    const auto n_kv = kv_self->n;
 
     const auto & n_embd_head_k = hparams.n_embd_head_k;
     const auto & n_embd_head_v = hparams.n_embd_head_v;
