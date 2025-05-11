@@ -582,7 +582,7 @@ ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t il) cons
         // note: v->nb[1] <= v->nb[2]
         return ggml_view_3d(ctx, v,
                 hparams.n_embd_head_v, hparams.n_head_kv(il), n,
-                ggml_row_size(v->type, hparams.n_embd_head_v),    // v->nv[1]
+                ggml_row_size(v->type, hparams.n_embd_head_v),    // v->nb[1]
                 ggml_row_size(v->type, hparams.n_embd_v_gqa(il)), // v->nb[2]
                 0);
     }
