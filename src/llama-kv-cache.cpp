@@ -676,16 +676,24 @@ void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ub
 
                     if (swa) {
                         // may need to cut off old tokens for sliding window
-                        // TODO @ngxson : we are currently re-using the swa logic to store the chunked mask, we should rename SWA to something more generic like "aux mask"
-                        if (hparams.n_attn_chunk) {
-                            llama_pos pos_chunk_start = (pos / hparams.n_attn_chunk) * hparams.n_attn_chunk;
-                            if (cells[i].pos < pos_chunk_start || pos < pos_chunk_start) {
-                                f = -INFINITY;
-                            }
-                        } else if (hparams.n_swa) {
-                            if (pos - cells[i].pos >= (int32_t) hparams.n_swa) {
-                                f = -INFINITY;
-                            }
+                        switch (hparams.swa_type) {
+                            case LLAMA_SWA_TYPE_STANDARD:
+                                {
+                                    if (pos - cells[i].pos >= (int32_t) hparams.n_swa) {
+                                        f = -INFINITY;
+                                    }
+                                } break;
+                            case LLAMA_SWA_TYPE_CHUNKED:
+                                {
+                                    const llama_pos pos_chunk_start = (pos / hparams.n_swa) * hparams.n_swa;
+
+                                    // TODO: should this be simply:
+                                    //  if (cells[i].pos < pos_chunk_start) {
+                                    //
+                                    if (cells[i].pos < pos_chunk_start || pos < pos_chunk_start) {
+                                        f = -INFINITY;
+                                    }
+                                } break;
                         }
                     }
 
