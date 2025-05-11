@@ -12899,6 +12899,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
 
                 res = new llama_kv_cache_unified(
                         *this,
+                        nullptr,
                         params.type_k,
                         params.type_v,
                         !cparams.flash_attn,

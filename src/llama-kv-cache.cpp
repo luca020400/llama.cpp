@@ -23,13 +23,14 @@ uint32_t llama_kv_cache_unified::get_padding(const llama_cparams & cparams) {
 }
 
 llama_kv_cache_unified::llama_kv_cache_unified(
-        const llama_model & model,
-                ggml_type   type_k,
-                ggml_type   type_v,
-                     bool   v_trans,
-                     bool   offload,
-                 uint32_t   kv_size,
-                 uint32_t   padding) : model(model), hparams(model.hparams), v_trans(v_trans), padding(padding) {
+        const llama_model &  model,
+          layer_filter_cb && filter,
+                ggml_type    type_k,
+                ggml_type    type_v,
+                     bool    v_trans,
+                     bool    offload,
+                 uint32_t    kv_size,
+                 uint32_t    padding) : model(model), hparams(model.hparams), v_trans(v_trans), padding(padding) {
     has_shift = false;
     can_shift = true;
 
@@ -73,6 +74,11 @@ llama_kv_cache_unified::llama_kv_cache_unified(
     cells.resize(kv_size);
 
     for (uint32_t il = 0; il < hparams.n_layer; il++) {
+        if (filter && !filter(il)) {
+            LLAMA_LOG_DEBUG("%s: layer %3d: skipped\n", __func__, il);
+            continue;
+        }
+
         const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il) + hparams.n_embd_k_s();
         const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il) + hparams.n_embd_v_s();
 
@@ -1482,6 +1488,7 @@ bool llama_kv_cache_unified::state_read_meta(llama_io_read_i & io, uint32_t cell
 bool llama_kv_cache_unified::state_read_data(llama_io_read_i & io, uint32_t cell_count) {
     uint32_t v_trans;
     uint32_t n_layer;
+
     io.read_to(&v_trans, sizeof(v_trans));
     io.read_to(&n_layer, sizeof(n_layer));
 

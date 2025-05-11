@@ -92,14 +92,17 @@ class llama_kv_cache_unified : public llama_kv_cache {
 public:
     static uint32_t get_padding(const llama_cparams & cparams);
 
+    using layer_filter_cb = std::function<bool(int32_t il)>;
+
     llama_kv_cache_unified(
-            const llama_model & model,
-                    ggml_type   type_k,
-                    ggml_type   type_v,
-                         bool   v_trans,
-                         bool   offload,
-                     uint32_t   kv_size,
-                     uint32_t   padding);
+            const llama_model &  model,
+              layer_filter_cb && filter,
+                    ggml_type    type_k,
+                    ggml_type    type_v,
+                         bool    v_trans,
+                         bool    offload,
+                     uint32_t    kv_size,
+                     uint32_t    padding);
 
     ~llama_kv_cache_unified() = default;
 
@@ -200,7 +203,9 @@ private:
     };
 
     struct kv_layer {
-        uint32_t il; // layer index in the original model
+        // layer index in the model
+        // note: can be different from the layer index in the KV cache
+        uint32_t il;
 
         ggml_tensor * k;
         ggml_tensor * v;
