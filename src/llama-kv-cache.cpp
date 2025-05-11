@@ -857,13 +857,8 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
         const int64_t n_head_kv    = hparams.n_head_kv(il);
         const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
 
-        // TODO: move to model.get_freq_factors()
-        const bool is_swa = hparams.is_swa(il);
-
-        // note: the swa rope params could become part of the cparams in the future
-        //       if we decide to make them configurable, like the non-sliding ones
-        const float freq_base_l  = is_swa ? hparams.rope_freq_base_train_swa  : cparams.rope_freq_base;
-        const float freq_scale_l = is_swa ? hparams.rope_freq_scale_train_swa : cparams.rope_freq_scale;
+        const float freq_base_l  = model.get_rope_freq_base (cparams, il);
+        const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
 
         ggml_tensor * rope_factors = model.get_rope_factors(cparams, il);
 
