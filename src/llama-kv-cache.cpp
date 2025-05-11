@@ -103,23 +103,13 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         ggml_tensor * k;
         ggml_tensor * v;
 
-        // TODO: enable
-#if 0
-        if (hparams.is_swa(il)) {
-            k = ggml_new_tensor_2d(ctx, type_k, n_embd_k_gqa, hparams.n_swa);
-            v = ggml_new_tensor_2d(ctx, type_v, n_embd_v_gqa, hparams.n_swa);
-        } else {
-            k = ggml_new_tensor_2d(ctx, type_k, n_embd_k_gqa, kv_size);
-            v = ggml_new_tensor_2d(ctx, type_v, n_embd_v_gqa, kv_size);
-        }
-#else
         k = ggml_new_tensor_2d(ctx, type_k, n_embd_k_gqa, kv_size);
         v = ggml_new_tensor_2d(ctx, type_v, n_embd_v_gqa, kv_size);
-#endif
 
         ggml_format_name(k, "cache_k_l%d", il);
         ggml_format_name(v, "cache_v_l%d", il);
 
+        map_layer_ids[il] = layers.size();
         layers.push_back({ il, k, v });
     }
 
@@ -565,10 +555,10 @@ uint32_t llama_kv_cache_unified::get_n() const {
     return n;
 }
 
-ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t ikv) const {
-    auto * k = layers[ikv].k;
+ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t il) const {
+    const int32_t ikv = map_layer_ids.at(il);
 
-    const uint32_t il = layers[ikv].il;
+    auto * k = layers[ikv].k;
 
     return ggml_view_3d(ctx, k,
             hparams.n_embd_head_k, hparams.n_head_kv(il), n,
@@ -577,10 +567,10 @@ ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t ikv) con
             0);
 }
 
-ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t ikv) const {
-    auto * v = layers[ikv].v;
+ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t il) const {
+    const int32_t ikv = map_layer_ids.at(il);
 
-    const uint32_t il = layers[ikv].il;
+    auto * v = layers[ikv].v;
 
     if (!v_trans) {
         // note: v->nb[1] <= v->nb[2]
@@ -599,10 +589,10 @@ ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t ikv) con
             0);
 }
 
-ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t ikv) const {
-    auto * k = layers[ikv].k;
+ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const {
+    const int32_t ikv = map_layer_ids.at(il);
 
-    const uint32_t il = layers[ikv].il;
+    auto * k = layers[ikv].k;
 
     const int64_t n_tokens = k_cur->ne[2];
 
@@ -613,10 +603,10 @@ ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_
     return ggml_cpy(ctx, k_cur, k_view);
 }
 
-ggml_tensor * llama_kv_cache_unified::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t ikv) const {
-    auto * v = layers[ikv].v;
+ggml_tensor * llama_kv_cache_unified::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const {
+    const int32_t ikv = map_layer_ids.at(il);
 
-    const uint32_t il = layers[ikv].il;
+    auto * v = layers[ikv].v;
 
     const int64_t n_tokens = v_cur->ne[2];
 

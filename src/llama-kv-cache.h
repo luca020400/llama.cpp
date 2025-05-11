@@ -7,6 +7,7 @@
 
 #include "ggml-cpp.h"
 
+#include <map>
 #include <set>
 #include <vector>
 
@@ -161,11 +162,11 @@ public:
 
     uint32_t get_n() const;
 
-    ggml_tensor * get_k(ggml_context * ctx, int32_t ikv) const;
-    ggml_tensor * get_v(ggml_context * ctx, int32_t ikv) const;
+    ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
+    ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
 
-    ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t ikv) const;
-    ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t ikv) const;
+    ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const;
+    ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const;
 
     void set_input_kq_mask    (ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const;
     void set_input_kq_mask_swa(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const;
@@ -238,6 +239,9 @@ private:
 
     std::vector<kv_cell>  cells;
     std::vector<kv_layer> layers;
+
+    // model layer id -> KV cache layer id
+    std::map<int32_t, int32_t> map_layer_ids;
 
     // pending cell updates that are not yet committed
     struct {
