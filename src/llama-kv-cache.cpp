@@ -565,6 +565,73 @@ const llama_kv_cache_unified::kv_layer & llama_kv_cache_unified::get_layer(int32
     return layers[il];
 }
 
+ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t il) const {
+    auto * k = layers[il].k;
+
+    return ggml_view_3d(ctx, k,
+            hparams.n_embd_head_k, hparams.n_head_kv(il), n,
+            ggml_row_size(k->type, hparams.n_embd_head_k),
+            ggml_row_size(k->type, hparams.n_embd_k_gqa(il)),
+            0);
+}
+
+ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t il) const {
+    auto * v = layers[il].v;
+
+    if (!v_trans) {
+        // note: v->nb[1] <= v->nb[2]
+        return ggml_view_3d(ctx, v,
+                hparams.n_embd_head_v, hparams.n_head_kv(il), n,
+                ggml_row_size(v->type, hparams.n_embd_head_v),    // v->nv[1]
+                ggml_row_size(v->type, hparams.n_embd_v_gqa(il)), // v->nb[2]
+                0);
+    }
+
+    // note: v->nb[1] > v->nb[2]
+    return ggml_view_3d(ctx, v,
+            n, hparams.n_head_kv(il), hparams.n_embd_head_v,
+            ggml_element_size(v)*v->ne[1]*hparams.n_embd_head_v, // v->nb[1]
+            ggml_element_size(v)*v->ne[1],                       // v->nb[2]
+            0);
+}
+
+ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const {
+    auto * k = layers[il].k;
+
+    const int64_t n_tokens = k_cur->ne[2];
+
+    ggml_tensor * k_view = ggml_view_1d(ctx, k,
+            n_tokens*hparams.n_embd_k_gqa(il),
+            ggml_row_size(k->type, hparams.n_embd_k_gqa(il))*head);
+
+    return ggml_cpy(ctx, k_cur, k_view);
+}
+
+ggml_tensor * llama_kv_cache_unified::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const {
+    auto * v = layers[il].v;
+
+    const int64_t n_tokens = v_cur->ne[2];
+
+    v_cur = ggml_reshape_2d(ctx, v_cur, hparams.n_embd_v_gqa(il), n_tokens);
+
+    ggml_tensor * v_view = nullptr;
+
+    if (!v_trans) {
+        v_view = ggml_view_1d(ctx, v,
+                n_tokens*hparams.n_embd_v_gqa(il),
+                ggml_row_size(v->type, hparams.n_embd_v_gqa(il))*head);
+    } else {
+        // note: the V cache is transposed when not using flash attention
+        v_view = ggml_view_2d(ctx, v, n_tokens, hparams.n_embd_v_gqa(il),
+                (v->ne[1])*ggml_element_size(v),
+                (    head)*ggml_element_size(v));
+
+        v_cur = ggml_transpose(ctx, v_cur);
+    }
+
+    return ggml_cpy(ctx, v_cur, v_view);
+}
+
 void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const {
     const int64_t n_tokens     = ubatch->n_tokens;
     const int64_t n_seq_tokens = ubatch->n_seq_tokens;
@@ -633,7 +700,7 @@ void llama_kv_cache_unified::set_input_kq_mask_swa(ggml_tensor * dst, const llam
     const int64_t n_seqs       = ubatch->n_seqs;
 
     GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
-    float * data_swa = (float *) dst->data;
+    float * data = (float *) dst->data;
 
     const int64_t n_kv = n;
 
@@ -661,28 +728,26 @@ void llama_kv_cache_unified::set_input_kq_mask_swa(ggml_tensor * dst, const llam
 
                     // may need to cut off old tokens for sliding window
                     // TODO @ngxson : we are currently re-using the swa logic to store the chunked mask, we should rename SWA to something more generic like "aux mask"
-                    if (data_swa) {
-                        if (hparams.n_attn_chunk) {
-                            llama_pos pos_chunk_start = (pos / hparams.n_attn_chunk) * hparams.n_attn_chunk;
-                            if (cells[i].pos < pos_chunk_start || pos < pos_chunk_start) {
-                                f = -INFINITY;
-                            }
-                        } else {
-                            if (pos - cells[i].pos >= (int32_t)hparams.n_swa) {
-                                f = -INFINITY;
-                            }
+                    if (hparams.n_attn_chunk) {
+                        llama_pos pos_chunk_start = (pos / hparams.n_attn_chunk) * hparams.n_attn_chunk;
+                        if (cells[i].pos < pos_chunk_start || pos < pos_chunk_start) {
+                            f = -INFINITY;
                         }
-                        data_swa[h*(n_kv*n_tokens) + s*(n_kv*n_seq_tokens) + j*n_kv + i] = f;
+                    } else {
+                        if (pos - cells[i].pos >= (int32_t)hparams.n_swa) {
+                            f = -INFINITY;
+                        }
                     }
+                    data[h*(n_kv*n_tokens) + s*(n_kv*n_seq_tokens) + j*n_kv + i] = f;
                 }
             }
         }
 
         // mask padded tokens
-        if (data_swa) {
+        if (data) {
             for (int i = n_tokens; i < GGML_PAD(n_tokens, GGML_KQ_MASK_PAD); ++i) {
                 for (int j = 0; j < n_kv; ++j) {
-                    data_swa[h*(n_kv*n_tokens) + i*n_kv + j] = -INFINITY;
+                    data[h*(n_kv*n_tokens) + i*n_kv + j] = -INFINITY;
                 }
             }
         }
@@ -1296,11 +1361,11 @@ void llama_kv_cache_unified::state_write_data(llama_io_write_i & io, const std::
             }
         }
     } else {
+        // When v is transposed, we also need the element size and get the element ranges from each row
+        const uint32_t kv_size = size;
+
         for (uint32_t il = 0; il < n_layer; ++il) {
             const auto & layer = layers[il];
-
-            // When v is transposed, we also need the element size and get the element ranges from each row
-            const uint32_t kv_size = size;
 
             const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il) + hparams.n_embd_v_s();
 

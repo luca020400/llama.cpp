@@ -1059,16 +1059,12 @@ ggml_tensor * llm_graph_context::build_attn_mha(
          ggml_tensor * kq_b,
          ggml_tensor * kq_mask,
          ggml_tensor * v_mla,
-             bool      v_trans,
              float     kq_scale) const {
-  //const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
-  //const int64_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
+    const bool v_trans = v->nb[1] > v->nb[2];
 
-  //const int64_t n_head    = hparams.n_head(il);
-  //const int64_t n_head_kv = hparams.n_head_kv(il);
-
-  //const auto & n_embd_head_k = hparams.n_embd_head_k;
-  //const auto & n_embd_head_v = hparams.n_embd_head_v;
+    q = ggml_permute(ctx0, q, 0, 2, 1, 3);
+    k = ggml_permute(ctx0, k, 0, 2, 1, 3);
+    v = ggml_permute(ctx0, v, 0, 2, 1, 3);
 
     const auto n_tokens = q->ne[1];
     const auto n_head   = q->ne[2];
@@ -1207,17 +1203,11 @@ ggml_tensor * llm_graph_context::build_attn(
 
     const auto & kq_mask = inp->get_kq_mask();
 
-    ggml_tensor * q = ggml_permute(ctx0, q_cur, 0, 2, 1, 3);
-    //cb(q, "q", il);
+    ggml_tensor * q = q_cur;
+    ggml_tensor * k = k_cur;
+    ggml_tensor * v = v_cur;
 
-    ggml_tensor * k = ggml_permute(ctx0, k_cur, 0, 2, 1, 3);
-    //cb(k, "k", il);
-
-    ggml_tensor * v = ggml_permute(ctx0, v_cur, 0, 2, 1, 3);
-    //cb(k, "v", il);
-
-    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, false, kq_scale);
-
+    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, kq_scale);
     cb(cur, "kqv_out", il);
 
     if (wo) {
@@ -1285,82 +1275,21 @@ ggml_tensor * llm_graph_context::build_attn(
 
     const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
 
-    const auto & kv_layer = kv_self->get_layer(il);
-
-    const auto & n_ctx = cparams.n_ctx;
-
-    const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
-    const int64_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
-
-    const auto n_tokens = q_cur->ne[2];
-
-    const bool v_trans = !cparams.flash_attn;
-
     // store to KV cache
     {
-        const auto kv_head = kv_self->head;
-
-        GGML_ASSERT(kv_self->size == n_ctx);
-
-        ggml_tensor * k_cache_view = ggml_view_1d(ctx0, kv_layer.k, n_tokens*n_embd_k_gqa, ggml_row_size(kv_layer.k->type, n_embd_k_gqa)*kv_head);
-        //cb(k_cache_view, "k_cache_view", il);
-
-        // note: storing RoPE-ed version of K in the KV cache
-        ggml_build_forward_expand(gf, ggml_cpy(ctx0, k_cur, k_cache_view));
-
-        v_cur = ggml_reshape_2d(ctx0, v_cur, n_embd_v_gqa, n_tokens);
-
-        ggml_tensor * v_cache_view = nullptr;
-
-        if (!v_trans) {
-            v_cache_view = ggml_view_1d(ctx0, kv_layer.v, n_tokens*n_embd_v_gqa, ggml_row_size(kv_layer.v->type, n_embd_v_gqa)*kv_head);
-        } else {
-            // note: the V cache is transposed when not using flash attention
-            v_cache_view = ggml_view_2d(ctx0, kv_layer.v, n_tokens, n_embd_v_gqa,
-                    (  n_ctx)*ggml_element_size(kv_layer.v),
-                    (kv_head)*ggml_element_size(kv_layer.v));
-
-            v_cur = ggml_transpose(ctx0, v_cur);
-        }
-        //cb(v_cache_view, "v_cache_view", il);
-
-        ggml_build_forward_expand(gf, ggml_cpy(ctx0, v_cur, v_cache_view));
+        ggml_build_forward_expand(gf, kv_self->cpy_k(ctx0, k_cur, il));
+        ggml_build_forward_expand(gf, kv_self->cpy_v(ctx0, v_cur, il));
     }
 
     const bool is_swa = hparams.is_swa(il);
-    const int64_t n_head_kv = hparams.n_head_kv(il);
 
     const auto & kq_mask = is_swa ? inp->get_kq_mask_swa() : inp->get_kq_mask();
 
-    const auto n_kv = kv_self->n;
+    ggml_tensor * q = q_cur;
+    ggml_tensor * k = kv_self->get_k(ctx0, il);
+    ggml_tensor * v = kv_self->get_v(ctx0, il);
 
-    const auto & n_embd_head_k = hparams.n_embd_head_k;
-    const auto & n_embd_head_v = hparams.n_embd_head_v;
-
-    ggml_tensor * q = ggml_permute(ctx0, q_cur, 0, 2, 1, 3);
-    //cb(q, "q", il);
-
-    ggml_tensor * k =
-        ggml_view_3d(ctx0, kv_layer.k,
-                n_embd_head_k, n_kv, n_head_kv,
-                ggml_row_size(kv_layer.k->type, n_embd_k_gqa),
-                ggml_row_size(kv_layer.k->type, n_embd_head_k),
-                0);
-    //cb(k, "k", il);
-
-    ggml_tensor * v = !v_trans ?
-        ggml_view_3d(ctx0, kv_layer.v,
-                n_embd_head_v, n_kv, n_head_kv,
-                ggml_row_size(kv_layer.v->type, n_embd_v_gqa),
-                ggml_row_size(kv_layer.v->type, n_embd_head_v),
-                0) :
-        ggml_view_3d(ctx0, kv_layer.v,
-                n_kv, n_embd_head_v, n_head_kv,
-                ggml_element_size(kv_layer.v)*n_ctx,
-                ggml_element_size(kv_layer.v)*n_ctx*n_embd_head_v,
-                0);
-
-    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, v_trans, kq_scale);
+    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, kq_scale);
     cb(cur, "kqv_out", il);
 
     if (wo) {
@@ -1411,17 +1340,11 @@ ggml_tensor * llm_graph_context::build_attn(
 
     const auto & kq_mask = inp->get_kq_mask_cross();
 
-    ggml_tensor * q = ggml_permute(ctx0, q_cur, 0, 2, 1, 3);
-    //cb(q, "q", il);
+    ggml_tensor * q = q_cur;
+    ggml_tensor * k = k_cur;
+    ggml_tensor * v = v_cur;
 
-    ggml_tensor * k = ggml_permute(ctx0, k_cur, 0, 2, 1, 3);
-    //cb(k, "k", il);
-
-    ggml_tensor * v = ggml_permute(ctx0, v_cur, 0, 2, 1, 3);
-    //cb(k, "v", il);
-
-    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, false, kq_scale);
-
+    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, kq_scale);
     cb(cur, "kqv_out", il);
 
     if (wo) {

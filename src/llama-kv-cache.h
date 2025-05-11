@@ -133,9 +133,6 @@ public:
 
     ~llama_kv_cache_unified() = default;
 
-    // find how many cells are currently in use
-    uint32_t cell_max() const;
-
     // Note: The value of head isn't only used to optimize searching
     // for a free KV slot. llama_decode_impl also uses it, so it
     // cannot be freely changed after a slot has been allocated.
@@ -145,7 +142,6 @@ public:
 
     // computed before each graph build
     uint32_t n = 0;
-
 
     //
     // llama_memory_i
@@ -193,8 +189,15 @@ public:
 
     const kv_layer & get_layer(int32_t il) const;
 
+    ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
+    ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
+
+    ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const;
+    ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const;
+
     void set_input_kq_mask    (ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const;
     void set_input_kq_mask_swa(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const;
+
     void set_input_k_shift    (ggml_tensor * dst) const;
     void set_input_pos_bucket (ggml_tensor * dst, const llama_ubatch * ubatch) const;
 
@@ -238,6 +241,9 @@ private:
     // return true if cells have been moved
     bool defrag_prepare(int32_t n_max_nodes);
 
+    // find how many cells are currently in use
+    uint32_t cell_max() const;
+
     size_t total_size() const;
 
     size_t size_k_bytes() const;
@@ -268,6 +274,14 @@ private:
     bool state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
     bool state_read_data(llama_io_read_i & io, uint32_t cell_count);
 };
+
+//
+// llama_kv_cache_unified_swa
+//
+
+//class llama_kv_cache_unified_swa : public llama_kv_cache {
+//public:
+//};
 
 //
 // llama_kv_cache_recurrent
