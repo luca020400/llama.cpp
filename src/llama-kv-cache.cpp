@@ -174,6 +174,7 @@ bool llama_kv_cache_unified::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
             } else {
                 continue;
             }
+
             if (cells[i].is_empty()) {
                 // keep count of the number of used cells
                 if (cells[i].pos >= 0) {
@@ -339,6 +340,9 @@ void llama_kv_cache_unified::restore() {
     if (pending.ranges.empty()) {
         return;
     }
+
+    // TODO: here we assume that all sequences should be removed from the cache which is not always the case
+    //       need to start keeping more detailed pending information per-sequence
 
     uint32_t new_head = size;
 
@@ -1374,6 +1378,7 @@ bool llama_kv_cache_unified::state_read_meta(llama_io_read_i & io, uint32_t cell
             LLAMA_LOG_ERROR("%s: failed to find available cells in kv cache\n", __func__);
             return false;
         }
+
         commit();
 
         // DEBUG CHECK: kv.head should be our first cell, kv.head + cell_count - 1 should be our last cell (verify seq_id and pos values)
@@ -1569,9 +1574,10 @@ llama_kv_cache_unified_iswa::llama_kv_cache_unified_iswa(
 
     // TODO: provide from the llama_context
     const uint32_t n_seq_max = 1;
+    const uint32_t n_batch   = hparams.n_swa;
 
     const uint32_t kv_size_base = kv_size;
-    const uint32_t kv_size_swa  = hparams.n_swa*n_seq_max;
+    const uint32_t kv_size_swa  = (hparams.n_swa + n_batch)*n_seq_max;
 
     kv_base = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_base), type_k, type_v, v_trans, offload, kv_size_base, padding);
     kv_swa  = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_swa),  type_k, type_v, v_trans, offload, kv_size_swa,  padding);
@@ -1621,6 +1627,21 @@ void llama_kv_cache_unified_iswa::restore() {
 }
 
 void llama_kv_cache_unified_iswa::commit() {
+    if (pending.pos_max.empty()) {
+        return;
+    }
+
+    // slide the window, forgetting old tokens
+    for (const auto & [seq_id, pos_max] : pending.pos_max) {
+        if (pos_max <= (llama_pos) hparams.n_swa) {
+            continue;
+        }
+
+        kv_swa->seq_rm(seq_id, -1, pos_max - hparams.n_swa);
+    }
+
+    pending.pos_max.clear();
+
     kv_base->commit();
     kv_swa ->commit();
 }
@@ -1645,6 +1666,16 @@ void llama_kv_cache_unified_iswa::set_full() {
 }
 
 llama_sbatch llama_kv_cache_unified_iswa::sbatch_init(const llama_batch & batch, bool logits_all) {
+    // this will be used upon successful decode, during commit, to remove old SWA tokens
+    for (int i = 0; i < batch.n_tokens; ++i) {
+        for (int s = 0; s < batch.n_seq_id[i]; ++s) {
+            const llama_seq_id seq_id = batch.seq_id[i][s];
+            const llama_pos    pos    = batch.pos[i];
+
+            pending.pos_max[seq_id] = std::max(pending.pos_max[seq_id], pos);
+        }
+    }
+
     return kv_base->sbatch_init(batch, logits_all);
 }
 

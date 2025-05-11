@@ -135,7 +135,6 @@ public:
     void set_full() override;
 
     llama_sbatch sbatch_init(const llama_batch & batch, bool logits_all) override;
-
     llama_ubatch ubatch_next(llama_sbatch & sbatch, uint32_t n_ubatch, bool embd_pooled) const override;
 
     // updates the cache head
@@ -242,6 +241,7 @@ private:
     std::map<int32_t, int32_t> map_layer_ids;
 
     // pending cell updates that are not yet committed
+    // TODO: improve by keeping information per-sequence
     struct {
         std::vector<slot_range> ranges;
     } pending;
@@ -333,12 +333,8 @@ public:
     void set_full() override;
 
     llama_sbatch sbatch_init(const llama_batch & batch, bool logits_all) override;
-
     llama_ubatch ubatch_next(llama_sbatch & sbatch, uint32_t n_ubatch, bool embd_pooled) const override;
 
-    // updates the cache head
-    // Note: On success, it's important that cache.head points
-    // to the first cell of the slot.
     bool find_slot(const llama_ubatch & batch) override;
 
     int32_t get_n_tokens()   const override;
@@ -362,6 +358,11 @@ public:
     llama_kv_cache_unified * get_kv_swa () const;
 
 private:
+    // pending cell updates that are not yet committed
+    struct {
+        std::map<llama_seq_id, llama_pos> pos_max;
+    } pending;
+
     const llama_hparams & hparams;
 
     std::unique_ptr<llama_kv_cache_unified> kv_base;
@@ -431,7 +432,6 @@ public:
     void set_full() override;
 
     llama_sbatch sbatch_init(const llama_batch & batch, bool logits_all) override;
-
     llama_ubatch ubatch_next(llama_sbatch & sbatch, uint32_t n_ubatch, bool embd_pooled) const override;
 
     bool find_slot(const llama_ubatch & batch) override;
