@@ -102,7 +102,7 @@ struct llama_hparams {
     // Sliding Window Attention (SWA)
     llama_swa_type swa_type = LLAMA_SWA_TYPE_STANDARD;
 
-    uint32_t n_swa = 0;         // sliding window attention (SWA)
+    uint32_t n_swa = 0;         // the size of the sliding window (0 - no SWA)
     uint32_t n_swa_pattern = 1; // by default, all layers use non-sliding-window attention
 
     // for State Space Models

@@ -687,10 +687,7 @@ void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ub
                                 {
                                     const llama_pos pos_chunk_start = (pos / hparams.n_swa) * hparams.n_swa;
 
-                                    // TODO: should this be simply:
-                                    //  if (cells[i].pos < pos_chunk_start) {
-                                    //
-                                    if (cells[i].pos < pos_chunk_start || pos < pos_chunk_start) {
+                                    if (cells[i].pos < pos_chunk_start) {
                                         f = -INFINITY;
                                     }
                                 } break;
