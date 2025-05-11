@@ -168,9 +168,7 @@ public:
     ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const;
     ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const;
 
-    void set_input_kq_mask    (ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const;
-    void set_input_kq_mask_swa(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const; // TODO: remove
-
+    void set_input_kq_mask    (ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn, bool swa) const;
     void set_input_k_shift    (ggml_tensor * dst) const;
     void set_input_pos_bucket (ggml_tensor * dst, const llama_ubatch * ubatch) const;
 
@@ -359,12 +357,6 @@ public:
     //
     // llama_kv_cache_unified_iswa specific API
     //
-
-    ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
-    ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
-
-    ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const;
-    ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const;
 
     llama_kv_cache_unified * get_kv_base() const;
     llama_kv_cache_unified * get_kv_swa () const;

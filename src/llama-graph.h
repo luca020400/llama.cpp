@@ -257,12 +257,9 @@ public:
     void set_input(const llama_ubatch * ubatch) override;
 
     ggml_tensor * get_kq_mask()     const { return self_kq_mask_cnv; }
-    ggml_tensor * get_kq_mask_swa() const { return self_kq_mask_swa_cnv; } // TODO: remove
 
     ggml_tensor * self_kq_mask         = nullptr; // F32 [n_kv, n_batch]
     ggml_tensor * self_kq_mask_cnv     = nullptr; //     [n_kv, n_batch]
-    ggml_tensor * self_kq_mask_swa     = nullptr; // F32 [n_kv, n_batch] // TODO: remove
-    ggml_tensor * self_kq_mask_swa_cnv = nullptr; //     [n_kv, n_batch] // TODO: remove
 
     const llama_hparams & hparams;
     const llama_cparams & cparams;
@@ -407,7 +404,6 @@ struct llm_graph_context {
     const int64_t n_layer;
     const int64_t n_rot;
     const int64_t n_ctx;       // user-specified context size (can be different from n_ctx_train)
-    const int64_t n_ctx_per_seq;
     const int64_t n_head;
     const int64_t n_head_kv;
     const int64_t n_embd_head_k;

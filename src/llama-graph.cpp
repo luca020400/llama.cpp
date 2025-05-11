@@ -362,22 +362,17 @@ void llm_graph_input_attn_no_cache::set_input(const llama_ubatch * ubatch) {
 
 void llm_graph_input_attn_kv_unified::set_input(const llama_ubatch * ubatch) {
     if (self_kq_mask) {
-        kv_self->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn);
-    }
-
-    // TODO: remove
-    if (self_kq_mask_swa) {
-        kv_self->set_input_kq_mask_swa(self_kq_mask_swa, ubatch, cparams.causal_attn);
+        kv_self->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn, false);
     }
 }
 
 void llm_graph_input_attn_kv_unified_iswa::set_input(const llama_ubatch * ubatch) {
     if (self_kq_mask) {
-        kv_self->get_kv_base()->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn);
+        kv_self->get_kv_base()->set_input_kq_mask(self_kq_mask, ubatch, cparams.causal_attn, false);
     }
 
     if (self_kq_mask_swa) {
-        kv_self->get_kv_swa()->set_input_kq_mask_swa(self_kq_mask_swa, ubatch, cparams.causal_attn);
+        kv_self->get_kv_swa()->set_input_kq_mask(self_kq_mask_swa, ubatch, cparams.causal_attn, true);
     }
 }
 
@@ -427,7 +422,6 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     n_layer          (hparams.n_layer),
     n_rot            (hparams.n_rot),
     n_ctx            (cparams.n_ctx),
-    n_ctx_per_seq    (cparams.n_ctx / cparams.n_seq_max),
     n_head           (hparams.n_head()),
     n_head_kv        (hparams.n_head_kv()),
     n_embd_head_k    (hparams.n_embd_head_k),
@@ -1242,6 +1236,9 @@ llm_graph_input_attn_kv_unified * llm_graph_context::build_attn_inp_kv_unified()
     auto inp = std::make_unique<llm_graph_input_attn_kv_unified>(hparams, cparams, kv_self);
 
     {
+        GGML_ASSERT(hparams.n_swa_pattern == 1 && "Use llama_kv_cache_unified_iswa for SWA");
+        GGML_ASSERT(hparams.n_swa == 0         && "Use llama_kv_cache_unified_iswa for SWA");
+
         const auto n_kv = kv_self->get_n();
 
         inp->self_kq_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
@@ -1249,19 +1246,6 @@ llm_graph_input_attn_kv_unified * llm_graph_context::build_attn_inp_kv_unified()
         ggml_set_input(inp->self_kq_mask);
 
         inp->self_kq_mask_cnv = cparams.flash_attn ? ggml_cast(ctx0, inp->self_kq_mask, GGML_TYPE_F16) : inp->self_kq_mask;
-    }
-
-    // TODO: remove
-    if (hparams.n_swa_pattern > 1) {
-        GGML_ASSERT(hparams.n_swa > 0);
-
-        const auto n_kv = kv_self->get_n();
-
-        inp->self_kq_mask_swa = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_kv, GGML_PAD(n_tokens, GGML_KQ_MASK_PAD));
-        //cb(inp->self_kq_mask_swa, "KQ_mask_swa", -1);
-        ggml_set_input(inp->self_kq_mask_swa);
-
-        inp->self_kq_mask_swa_cnv = cparams.flash_attn ? ggml_cast(ctx0, inp->self_kq_mask_swa, GGML_TYPE_F16) : inp->self_kq_mask_swa;
     }
 
     return (llm_graph_input_attn_kv_unified *) res->add_input(std::move(inp));
@@ -1293,9 +1277,7 @@ ggml_tensor * llm_graph_context::build_attn(
         ggml_build_forward_expand(gf, kv_self->cpy_v(ctx0, v_cur, il));
     }
 
-    const bool is_swa = hparams.is_swa(il);
-
-    const auto & kq_mask = is_swa ? inp->get_kq_mask_swa() : inp->get_kq_mask();
+    const auto & kq_mask = inp->get_kq_mask();
 
     ggml_tensor * q = q_cur;
     ggml_tensor * k = kv_self->get_k(ctx0, il);
@@ -1335,8 +1317,8 @@ llm_graph_input_attn_kv_unified_iswa * llm_graph_context::build_attn_inp_kv_unif
     }
 
     {
-        GGML_ASSERT(hparams.n_swa_pattern > 1);
-        GGML_ASSERT(hparams.n_swa > 0);
+        GGML_ASSERT(hparams.n_swa_pattern > 1 && "Use llama_kv_cache_unified for non-SWA");
+        GGML_ASSERT(hparams.n_swa > 0         && "Use llama_kv_cache_unified for non-SWA");
 
         const auto n_kv = kv_self->get_kv_swa()->get_n();
 
@@ -1368,21 +1350,23 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_build_forward_expand(gf, k_cur);
     ggml_build_forward_expand(gf, v_cur);
 
+    const bool is_swa = hparams.is_swa(il);
+
     const llama_kv_cache_unified_iswa * kv_self = static_cast<const llama_kv_cache_unified_iswa *>(memory);
+
+    const auto * kv = is_swa ? kv_self->get_kv_swa() : kv_self->get_kv_base();
 
     // store to KV cache
     {
-        ggml_build_forward_expand(gf, kv_self->cpy_k(ctx0, k_cur, il));
-        ggml_build_forward_expand(gf, kv_self->cpy_v(ctx0, v_cur, il));
+        ggml_build_forward_expand(gf, kv->cpy_k(ctx0, k_cur, il));
+        ggml_build_forward_expand(gf, kv->cpy_v(ctx0, v_cur, il));
     }
-
-    const bool is_swa = hparams.is_swa(il);
 
     const auto & kq_mask = is_swa ? inp->get_kq_mask_swa() : inp->get_kq_mask();
 
     ggml_tensor * q = q_cur;
-    ggml_tensor * k = kv_self->get_k(ctx0, il);
-    ggml_tensor * v = kv_self->get_v(ctx0, il);
+    ggml_tensor * k = kv->get_k(ctx0, il);
+    ggml_tensor * v = kv->get_v(ctx0, il);
 
     ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, kq_scale);
     cb(cur, "kqv_out", il);

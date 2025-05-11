@@ -630,7 +630,7 @@ ggml_tensor * llama_kv_cache_unified::cpy_v(ggml_context * ctx, ggml_tensor * v_
     return ggml_cpy(ctx, v_cur, v_view);
 }
 
-void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const {
+void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn, bool swa) const {
     const int64_t n_tokens     = ubatch->n_tokens;
     const int64_t n_seq_tokens = ubatch->n_seq_tokens;
     const int64_t n_seqs       = ubatch->n_seqs;
@@ -674,68 +674,21 @@ void llama_kv_cache_unified::set_input_kq_mask(ggml_tensor * dst, const llama_ub
                         }
                     }
 
-                    if (data) {
-                        data[h*(n_kv*n_tokens) + s*(n_kv*n_seq_tokens) + j*n_kv + i] = f;
-                    }
-                }
-            }
-        }
-
-        // mask padded tokens
-        if (data) {
-            for (int i = n_tokens; i < GGML_PAD(n_tokens, GGML_KQ_MASK_PAD); ++i) {
-                for (int j = 0; j < n_kv; ++j) {
-                    data[h*(n_kv*n_tokens) + i*n_kv + j] = -INFINITY;
-                }
-            }
-        }
-    }
-}
-
-void llama_kv_cache_unified::set_input_kq_mask_swa(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const {
-    const int64_t n_tokens     = ubatch->n_tokens;
-    const int64_t n_seq_tokens = ubatch->n_seq_tokens;
-    const int64_t n_seqs       = ubatch->n_seqs;
-
-    GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
-    float * data = (float *) dst->data;
-
-    const int64_t n_kv = n;
-
-    for (int h = 0; h < 1; ++h) {
-        for (int s = 0; s < n_seqs; ++s) {
-            const llama_seq_id seq_id = ubatch->seq_id[s][0];
-
-            for (int j = 0; j < n_seq_tokens; ++j) {
-                const llama_pos pos = ubatch->pos[s*n_seq_tokens + j];
-
-                for (int i = 0; i < n_kv; ++i) {
-                    float f;
-                    // mask the token if:
-                    if (!cells[i].has_seq_id(seq_id) // not the correct sequence
-                            || (causal_attn && cells[i].pos > pos) // for causal, mask future tokens
-                       ) {
-                        f = -INFINITY;
-                    } else {
-                        if (hparams.use_alibi) {
-                            f = -std::abs(cells[i].pos - pos);
-                        } else {
-                            f = 0.0f;
+                    if (swa) {
+                        // may need to cut off old tokens for sliding window
+                        // TODO @ngxson : we are currently re-using the swa logic to store the chunked mask, we should rename SWA to something more generic like "aux mask"
+                        if (hparams.n_attn_chunk) {
+                            llama_pos pos_chunk_start = (pos / hparams.n_attn_chunk) * hparams.n_attn_chunk;
+                            if (cells[i].pos < pos_chunk_start || pos < pos_chunk_start) {
+                                f = -INFINITY;
+                            }
+                        } else if (hparams.n_swa) {
+                            if (pos - cells[i].pos >= (int32_t) hparams.n_swa) {
+                                f = -INFINITY;
+                            }
                         }
                     }
 
-                    // may need to cut off old tokens for sliding window
-                    // TODO @ngxson : we are currently re-using the swa logic to store the chunked mask, we should rename SWA to something more generic like "aux mask"
-                    if (hparams.n_attn_chunk) {
-                        llama_pos pos_chunk_start = (pos / hparams.n_attn_chunk) * hparams.n_attn_chunk;
-                        if (cells[i].pos < pos_chunk_start || pos < pos_chunk_start) {
-                            f = -INFINITY;
-                        }
-                    } else {
-                        if (pos - cells[i].pos >= (int32_t)hparams.n_swa) {
-                            f = -INFINITY;
-                        }
-                    }
                     data[h*(n_kv*n_tokens) + s*(n_kv*n_seq_tokens) + j*n_kv + i] = f;
                 }
             }
@@ -891,8 +844,6 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
     const auto & n_embd_head_k = hparams.n_embd_head_k;
   //const auto & n_embd_head_v = hparams.n_embd_head_v;
 
-    const uint32_t n_ctx_per_seq = cparams.n_ctx / cparams.n_seq_max;
-
     //GGML_ASSERT(kv_self->size == n_ctx);
 
     auto inp = std::make_unique<llm_graph_input_k_shift>(this);
@@ -914,7 +865,7 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
         const float freq_base_l  = is_swa ? hparams.rope_freq_base_train_swa  : cparams.rope_freq_base;
         const float freq_scale_l = is_swa ? hparams.rope_freq_scale_train_swa : cparams.rope_freq_scale;
 
-        ggml_tensor * rope_factors = model.get_rope_factors(n_ctx_per_seq, il);
+        ggml_tensor * rope_factors = model.get_rope_factors(cparams, il);
 
         ggml_tensor * k =
             ggml_view_3d(ctx, layer.k,
@@ -1734,38 +1685,6 @@ void llama_kv_cache_unified_iswa::state_write(llama_io_write_i & io, llama_seq_i
 void llama_kv_cache_unified_iswa::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
     kv_base->state_read(io, seq_id);
     kv_swa ->state_read(io, seq_id);
-}
-
-ggml_tensor * llama_kv_cache_unified_iswa::get_k(ggml_context * ctx, int32_t il) const {
-    if (hparams.is_swa(il)) {
-        return kv_swa->get_k(ctx, il);
-    }
-
-    return kv_base->get_k(ctx, il);
-}
-
-ggml_tensor * llama_kv_cache_unified_iswa::get_v(ggml_context * ctx, int32_t il) const {
-    if (hparams.is_swa(il)) {
-        return kv_swa->get_v(ctx, il);
-    }
-
-    return kv_base->get_v(ctx, il);
-}
-
-ggml_tensor * llama_kv_cache_unified_iswa::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const {
-    if (hparams.is_swa(il)) {
-        return kv_swa->cpy_k(ctx, k_cur, il);
-    }
-
-    return kv_base->cpy_k(ctx, k_cur, il);
-}
-
-ggml_tensor * llama_kv_cache_unified_iswa::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const {
-    if (hparams.is_swa(il)) {
-        return kv_swa->cpy_v(ctx, v_cur, il);
-    }
-
-    return kv_base->cpy_v(ctx, v_cur, il);
 }
 
 llama_kv_cache_unified * llama_kv_cache_unified_iswa::get_kv_base() const {
