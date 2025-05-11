@@ -30,13 +30,11 @@ llama_kv_cache_unified::llama_kv_cache_unified(
                      bool   offload,
                  uint32_t   kv_size,
                  uint32_t   padding) : model(model), hparams(model.hparams), v_trans(v_trans), padding(padding) {
-    const int32_t n_layer = hparams.n_layer;
-
     has_shift = false;
     can_shift = true;
 
     LLAMA_LOG_INFO("%s: kv_size = %d, type_k = '%s', type_v = '%s', n_layer = %d, can_shift = %d, padding = %d\n",
-            __func__, kv_size, ggml_type_name(type_k), ggml_type_name(type_v), n_layer, can_shift, padding);
+            __func__, kv_size, ggml_type_name(type_k), ggml_type_name(type_v), hparams.n_layer, can_shift, padding);
 
     GGML_ASSERT(kv_size % padding == 0 && "kv_size must be a multiple of padding");
 
@@ -49,7 +47,7 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
             ggml_init_params params = {
-                /*.mem_size   =*/ size_t(2u*n_layer*ggml_tensor_overhead()),
+                /*.mem_size   =*/ size_t(2u*hparams.n_layer*ggml_tensor_overhead()),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
@@ -73,26 +71,23 @@ llama_kv_cache_unified::llama_kv_cache_unified(
     used = 0;
 
     cells.resize(kv_size);
-    layers.resize(n_layer);
 
-    for (int i = 0; i < n_layer; i++) {
-        auto & layer = layers[i];
-
-        const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(i) + hparams.n_embd_k_s();
-        const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(i) + hparams.n_embd_v_s();
+    for (uint32_t il = 0; il < hparams.n_layer; il++) {
+        const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il) + hparams.n_embd_k_s();
+        const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il) + hparams.n_embd_v_s();
 
         const char * dev_name = "CPU";
 
         ggml_backend_buffer_type_t buft = ggml_backend_cpu_buffer_type();
 
         if (offload) {
-            auto * dev = model.dev_layer(i);
+            auto * dev = model.dev_layer(il);
             buft = ggml_backend_dev_buffer_type(dev);
 
             dev_name = ggml_backend_dev_name(dev);
         }
 
-        LLAMA_LOG_DEBUG("%s: layer %3d: dev = %s\n", __func__, i, dev_name);
+        LLAMA_LOG_DEBUG("%s: layer %3d: dev = %s\n", __func__, il, dev_name);
 
         ggml_context * ctx = ctx_for_buft(buft);
         if (!ctx) {
@@ -104,7 +99,7 @@ llama_kv_cache_unified::llama_kv_cache_unified(
 
         // TODO: enable
 #if 0
-        if (hparams.is_swa(i)) {
+        if (hparams.is_swa(il)) {
             k = ggml_new_tensor_2d(ctx, type_k, n_embd_k_gqa, hparams.n_swa);
             v = ggml_new_tensor_2d(ctx, type_v, n_embd_v_gqa, hparams.n_swa);
         } else {
@@ -116,11 +111,10 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         v = ggml_new_tensor_2d(ctx, type_v, n_embd_v_gqa, kv_size);
 #endif
 
-        ggml_format_name(k, "cache_k_l%d", i);
-        ggml_format_name(v, "cache_v_l%d", i);
+        ggml_format_name(k, "cache_k_l%d", il);
+        ggml_format_name(v, "cache_v_l%d", il);
 
-        layer.k = k;
-        layer.v = v;
+        layers.push_back({ il, k, v });
     }
 
     // allocate tensors and initialize the buffers to avoid NaNs in the padding
@@ -565,8 +559,10 @@ uint32_t llama_kv_cache_unified::get_n() const {
     return n;
 }
 
-ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t il) const {
-    auto * k = layers[il].k;
+ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t ikv) const {
+    auto * k = layers[ikv].k;
+
+    const uint32_t il = layers[ikv].il;
 
     return ggml_view_3d(ctx, k,
             hparams.n_embd_head_k, hparams.n_head_kv(il), n,
@@ -575,8 +571,10 @@ ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t il) cons
             0);
 }
 
-ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t il) const {
-    auto * v = layers[il].v;
+ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t ikv) const {
+    auto * v = layers[ikv].v;
+
+    const uint32_t il = layers[ikv].il;
 
     if (!v_trans) {
         // note: v->nb[1] <= v->nb[2]
@@ -595,8 +593,10 @@ ggml_tensor * llama_kv_cache_unified::get_v(ggml_context * ctx, int32_t il) cons
             0);
 }
 
-ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const {
-    auto * k = layers[il].k;
+ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t ikv) const {
+    auto * k = layers[ikv].k;
+
+    const uint32_t il = layers[ikv].il;
 
     const int64_t n_tokens = k_cur->ne[2];
 
@@ -607,8 +607,10 @@ ggml_tensor * llama_kv_cache_unified::cpy_k(ggml_context * ctx, ggml_tensor * k_
     return ggml_cpy(ctx, k_cur, k_view);
 }
 
-ggml_tensor * llama_kv_cache_unified::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const {
-    auto * v = layers[il].v;
+ggml_tensor * llama_kv_cache_unified::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t ikv) const {
+    auto * v = layers[ikv].v;
+
+    const uint32_t il = layers[ikv].il;
 
     const int64_t n_tokens = v_cur->ne[2];
 
@@ -890,8 +892,6 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
                 ggml_cgraph * gf) const {
     auto res = std::make_unique<llm_graph_result>();
 
-    const auto & n_layer = hparams.n_layer;
-
     const auto & n_embd_head_k = hparams.n_embd_head_k;
   //const auto & n_embd_head_v = hparams.n_embd_head_v;
 
@@ -904,8 +904,8 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
     inp->k_shift = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, cparams.n_ctx);
     ggml_set_input(inp->k_shift);
 
-    for (uint32_t il = 0; il < n_layer; ++il) {
-        const auto & layer = layers[il];
+    for (const auto & layer : layers) {
+        const uint32_t il = layer.il;
 
         const int64_t n_head_kv    = hparams.n_head_kv(il);
         const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
@@ -1028,8 +1028,8 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
             nm++;
         }
 
-        for (uint32_t il = 0; il < hparams.n_layer; ++il) { // NOLINT
-            const auto & layer = layers[il];
+        for (const auto & layer : layers) {
+            const uint32_t il = layer.il;
 
             const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
             const int64_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
@@ -1084,7 +1084,7 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
 }
 
 bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
-    const uint32_t n_layer = hparams.n_layer;
+    const uint32_t n_layer = layers.size();
 
     const uint32_t n_kv   = cell_max();
     const uint32_t n_used = used;
@@ -1309,7 +1309,7 @@ void llama_kv_cache_unified::state_write_meta(llama_io_write_i & io, const std::
 
 void llama_kv_cache_unified::state_write_data(llama_io_write_i & io, const std::vector<std::pair<uint32_t, uint32_t>> & cell_ranges) const {
     const uint32_t v_trans = this->v_trans ? 1 : 0;
-    const uint32_t n_layer = hparams.n_layer;
+    const uint32_t n_layer = layers.size();
 
     io.write(&v_trans, sizeof(v_trans));
     io.write(&n_layer, sizeof(n_layer));
@@ -1318,8 +1318,8 @@ void llama_kv_cache_unified::state_write_data(llama_io_write_i & io, const std::
 
     // Iterate and write all the keys first, each row is a cell
     // Get whole range at a time
-    for (uint32_t il = 0; il < n_layer; ++il) {
-        const auto & layer = layers[il];
+    for (const auto & layer : layers) {
+        const uint32_t il = layer.il;
 
         const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il) + hparams.n_embd_k_s();
 
@@ -1340,8 +1340,8 @@ void llama_kv_cache_unified::state_write_data(llama_io_write_i & io, const std::
     }
 
     if (!v_trans) {
-        for (uint32_t il = 0; il < n_layer; ++il) {
-            const auto & layer = layers[il];
+        for (const auto & layer : layers) {
+            const uint32_t il = layer.il;
 
             const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il) + hparams.n_embd_v_s();
 
@@ -1364,8 +1364,8 @@ void llama_kv_cache_unified::state_write_data(llama_io_write_i & io, const std::
         // When v is transposed, we also need the element size and get the element ranges from each row
         const uint32_t kv_size = size;
 
-        for (uint32_t il = 0; il < n_layer; ++il) {
-            const auto & layer = layers[il];
+        for (const auto & layer : layers) {
+            const uint32_t il = layer.il;
 
             const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il) + hparams.n_embd_v_s();
 
@@ -1485,8 +1485,8 @@ bool llama_kv_cache_unified::state_read_data(llama_io_read_i & io, uint32_t cell
     io.read_to(&v_trans, sizeof(v_trans));
     io.read_to(&n_layer, sizeof(n_layer));
 
-    if (n_layer != hparams.n_layer) {
-        LLAMA_LOG_ERROR("%s: mismatched layer count (%u instead of %u)\n", __func__, n_layer, hparams.n_layer);
+    if (n_layer != layers.size()) {
+        LLAMA_LOG_ERROR("%s: mismatched layer count (%u instead of %u)\n", __func__, n_layer, (uint32_t) layers.size());
         return false;
     }
     if (cell_count > size) {
@@ -1499,8 +1499,8 @@ bool llama_kv_cache_unified::state_read_data(llama_io_read_i & io, uint32_t cell
     }
 
     // For each layer, read the keys for each cell, one row is one cell, read as one contiguous block
-    for (uint32_t il = 0; il < n_layer; ++il) {
-        const auto & layer = layers[il];
+    for (const auto & layer : layers) {
+        const uint32_t il = layer.il;
 
         const uint32_t n_embd_k_gqa = hparams.n_embd_k_gqa(il) + hparams.n_embd_k_s();
 
@@ -1529,8 +1529,8 @@ bool llama_kv_cache_unified::state_read_data(llama_io_read_i & io, uint32_t cell
     }
 
     if (!this->v_trans) {
-        for (uint32_t il = 0; il < n_layer; ++il) {
-            const auto & layer = layers[il];
+        for (const auto & layer : layers) {
+            const uint32_t il = layer.il;
 
             const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il) + hparams.n_embd_v_s();
 
@@ -1559,8 +1559,8 @@ bool llama_kv_cache_unified::state_read_data(llama_io_read_i & io, uint32_t cell
         }
     } else {
         // For each layer, read the values for each cell (transposed)
-        for (uint32_t il = 0; il < n_layer; ++il) {
-            const auto & layer = layers[il];
+        for (const auto & layer : layers) {
+            const uint32_t il = layer.il;
 
             const uint32_t n_embd_v_gqa = hparams.n_embd_v_gqa(il) + hparams.n_embd_v_s();
 

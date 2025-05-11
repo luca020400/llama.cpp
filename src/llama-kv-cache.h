@@ -158,11 +158,11 @@ public:
 
     uint32_t get_n() const;
 
-    ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
-    ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
+    ggml_tensor * get_k(ggml_context * ctx, int32_t ikv) const;
+    ggml_tensor * get_v(ggml_context * ctx, int32_t ikv) const;
 
-    ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const;
-    ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const;
+    ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t ikv) const;
+    ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t ikv) const;
 
     void set_input_kq_mask    (ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const;
     void set_input_kq_mask_swa(ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn) const;
@@ -200,8 +200,10 @@ private:
     };
 
     struct kv_layer {
-        ggml_tensor * k = nullptr;
-        ggml_tensor * v = nullptr;
+        uint32_t il; // layer index in the original model
+
+        ggml_tensor * k;
+        ggml_tensor * v;
     };
 
     bool has_shift = false;
@@ -229,7 +231,7 @@ private:
     std::vector<ggml_context_ptr>        ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
 
-    std::vector<kv_cell> cells;
+    std::vector<kv_cell>  cells;
     std::vector<kv_layer> layers;
 
     // pending cell updates that are not yet committed
