@@ -111,7 +111,7 @@ public:
 
     bool seq_rm  (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1) override;
     void seq_cp  (llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) override;
-    void seq_keep(llama_seq_id seq_id) override;
+    void seq_keep(llama_seq_id seq_id)                                                          override;
     void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos delta) override;
     void seq_div (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, int d) override;
 
@@ -147,6 +147,15 @@ public:
 
     bool get_can_shift() const override;
 
+    // state write/load
+
+    void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1) const override;
+    void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1)       override;
+
+    //
+    // llama_kv_cache_unified specific API
+    //
+
     uint32_t get_n() const;
 
     ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
@@ -160,11 +169,6 @@ public:
 
     void set_input_k_shift    (ggml_tensor * dst) const;
     void set_input_pos_bucket (ggml_tensor * dst, const llama_ubatch * ubatch) const;
-
-    // state write/load
-
-    void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1) const override;
-    void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1) override;
 
 private:
     const llama_model & model;
