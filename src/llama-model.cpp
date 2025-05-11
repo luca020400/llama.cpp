@@ -8450,7 +8450,7 @@ struct llm_build_gemma3 : public llm_graph_context {
         ggml_tensor * inp_pos = build_inp_pos();
 
         // TODO: is causal == true correct? might need some changes
-        auto * inp_attn = build_attn_inp_kv_unified();
+        auto * inp_attn = build_attn_inp_kv_unified_iswa();
 
         for (int il = 0; il < n_layer; ++il) {
             const bool is_swa = hparams.is_swa(il);
@@ -12888,6 +12888,23 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                         GGML_TYPE_F32,
                         cparams.offload_kqv,
                         std::max((uint32_t) 1, cparams.n_seq_max));
+            } break;
+        case LLM_ARCH_GEMMA3:
+            {
+                const auto padding = llama_kv_cache_unified::get_padding(cparams);
+
+                cparams.n_ctx = GGML_PAD(cparams.n_ctx, padding);
+
+                LLAMA_LOG_DEBUG("%s: n_ctx = %u (padded)\n", __func__, cparams.n_ctx);
+
+                res = new llama_kv_cache_unified_iswa(
+                        *this,
+                        params.type_k,
+                        params.type_v,
+                        !cparams.flash_attn,
+                        cparams.offload_kqv,
+                        cparams.n_ctx,
+                        padding);
             } break;
         default:
             {

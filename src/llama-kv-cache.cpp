@@ -906,6 +906,7 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
         const int64_t n_head_kv    = hparams.n_head_kv(il);
         const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
 
+        // TODO: move to model.get_freq_factors()
         const bool is_swa = hparams.is_swa(il);
 
         // note: the swa rope params could become part of the cparams in the future
@@ -1598,6 +1599,181 @@ bool llama_kv_cache_unified::state_read_data(llama_io_read_i & io, uint32_t cell
     }
 
     return true;
+}
+
+//
+// llama_kv_cache_unified_iswa
+//
+
+llama_kv_cache_unified_iswa::llama_kv_cache_unified_iswa(
+        const llama_model & model,
+                ggml_type   type_k,
+                ggml_type   type_v,
+                     bool   v_trans,
+                     bool   offload,
+                 uint32_t   kv_size,
+                 uint32_t   padding) : hparams(model.hparams) {
+    llama_kv_cache_unified::layer_filter_cb filter_base = [&](int32_t il) { return !model.hparams.is_swa(il); };
+    llama_kv_cache_unified::layer_filter_cb filter_swa  = [&](int32_t il) { return  model.hparams.is_swa(il); };
+
+    // TODO: provide from the llama_context
+    const uint32_t n_seq_max = 1;
+
+    const uint32_t kv_size_base = kv_size;
+    const uint32_t kv_size_swa  = hparams.n_swa*n_seq_max;
+
+    kv_base = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_base), type_k, type_v, v_trans, offload, kv_size_base, padding);
+    kv_swa  = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_swa),  type_k, type_v, v_trans, offload, kv_size_swa,  padding);
+}
+
+void llama_kv_cache_unified_iswa::clear() {
+    kv_base->clear();
+    kv_swa ->clear();
+}
+
+bool llama_kv_cache_unified_iswa::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    bool res = true;
+
+    res = res & kv_base->seq_rm(seq_id, p0, p1);
+    res = res & kv_swa ->seq_rm(seq_id, p0, p1);
+
+    return res;
+}
+
+void llama_kv_cache_unified_iswa::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
+    kv_base->seq_cp(seq_id_src, seq_id_dst, p0, p1);
+    kv_swa ->seq_cp(seq_id_src, seq_id_dst, p0, p1);
+}
+
+void llama_kv_cache_unified_iswa::seq_keep(llama_seq_id seq_id) {
+    kv_base->seq_keep(seq_id);
+    kv_swa ->seq_keep(seq_id);
+}
+
+void llama_kv_cache_unified_iswa::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos delta) {
+    kv_base->seq_add(seq_id, p0, p1, delta);
+    kv_swa ->seq_add(seq_id, p0, p1, delta);
+}
+
+void llama_kv_cache_unified_iswa::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {
+    kv_base->seq_div(seq_id, p0, p1, d);
+    kv_swa ->seq_div(seq_id, p0, p1, d);
+}
+
+llama_pos llama_kv_cache_unified_iswa::seq_pos_max(llama_seq_id seq_id) const {
+    return kv_base->seq_pos_max(seq_id);
+}
+
+void llama_kv_cache_unified_iswa::restore() {
+    kv_base->restore();
+    kv_swa ->restore();
+}
+
+void llama_kv_cache_unified_iswa::commit() {
+    kv_base->commit();
+    kv_swa ->commit();
+}
+
+bool llama_kv_cache_unified_iswa::update(llama_context & lctx) {
+    bool res = true;
+
+    res = res & kv_base->update(lctx);
+    res = res & kv_swa ->update(lctx);
+
+    return res;
+}
+
+void llama_kv_cache_unified_iswa::defrag_sched(float thold) {
+    kv_base->defrag_sched(thold);
+    kv_swa ->defrag_sched(thold);
+}
+
+void llama_kv_cache_unified_iswa::set_full() {
+    kv_base->set_full();
+    kv_swa ->set_full();
+}
+
+llama_sbatch llama_kv_cache_unified_iswa::sbatch_init(const llama_batch & batch, bool logits_all) {
+    return kv_base->sbatch_init(batch, logits_all);
+}
+
+llama_ubatch llama_kv_cache_unified_iswa::ubatch_next(llama_sbatch & sbatch, uint32_t n_ubatch, bool embd_pooled) const {
+    return kv_base->ubatch_next(sbatch, n_ubatch, embd_pooled);
+}
+
+bool llama_kv_cache_unified_iswa::find_slot(const llama_ubatch & batch) {
+    bool res = true;
+
+    res = res & kv_base->find_slot(batch);
+    res = res & kv_swa ->find_slot(batch);
+
+    return res;
+}
+
+int32_t llama_kv_cache_unified_iswa::get_n_tokens()   const {
+    return kv_base->get_n_tokens();
+}
+
+int32_t llama_kv_cache_unified_iswa::get_used_cells() const {
+    return kv_base->get_used_cells();
+}
+
+llama_pos llama_kv_cache_unified_iswa::get_pos_max() const {
+    return kv_base->get_pos_max();
+}
+
+bool llama_kv_cache_unified_iswa::get_can_shift() const {
+    return false;
+}
+
+void llama_kv_cache_unified_iswa::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
+    kv_base->state_write(io, seq_id);
+    kv_swa ->state_write(io, seq_id);
+}
+
+void llama_kv_cache_unified_iswa::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
+    kv_base->state_read(io, seq_id);
+    kv_swa ->state_read(io, seq_id);
+}
+
+ggml_tensor * llama_kv_cache_unified_iswa::get_k(ggml_context * ctx, int32_t il) const {
+    if (hparams.is_swa(il)) {
+        return kv_swa->get_k(ctx, il);
+    }
+
+    return kv_base->get_k(ctx, il);
+}
+
+ggml_tensor * llama_kv_cache_unified_iswa::get_v(ggml_context * ctx, int32_t il) const {
+    if (hparams.is_swa(il)) {
+        return kv_swa->get_v(ctx, il);
+    }
+
+    return kv_base->get_v(ctx, il);
+}
+
+ggml_tensor * llama_kv_cache_unified_iswa::cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const {
+    if (hparams.is_swa(il)) {
+        return kv_swa->cpy_k(ctx, k_cur, il);
+    }
+
+    return kv_base->cpy_k(ctx, k_cur, il);
+}
+
+ggml_tensor * llama_kv_cache_unified_iswa::cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const {
+    if (hparams.is_swa(il)) {
+        return kv_swa->cpy_v(ctx, v_cur, il);
+    }
+
+    return kv_base->cpy_v(ctx, v_cur, il);
+}
+
+llama_kv_cache_unified * llama_kv_cache_unified_iswa::get_kv_base() const {
+    return kv_base.get();
+}
+
+llama_kv_cache_unified * llama_kv_cache_unified_iswa::get_kv_swa() const {
+    return kv_swa.get();
 }
 
 //
