@@ -90,36 +90,6 @@ private:
 // TODO: add notion of max sequences
 class llama_kv_cache_unified : public llama_kv_cache {
 public:
-    // commit/restore cache
-    struct slot_range {
-        uint32_t c0 = 0; // note: these are cell indices, not sequence positions
-        uint32_t c1 = 0;
-    };
-
-    struct kv_cell {
-        llama_pos pos   = -1;
-        llama_pos delta =  0;
-
-        std::set<llama_seq_id> seq_id;
-
-        bool has_seq_id(const llama_seq_id & id) const {
-            return seq_id.find(id) != seq_id.end();
-        }
-
-        bool is_empty() const {
-            return seq_id.empty();
-        }
-
-        bool is_same_seq(const kv_cell & other) const {
-            return seq_id == other.seq_id;
-        }
-    };
-
-    struct kv_layer {
-        ggml_tensor * k = nullptr;
-        ggml_tensor * v = nullptr;
-    };
-
     static uint32_t get_padding(const llama_cparams & cparams);
 
     llama_kv_cache_unified(
@@ -132,16 +102,6 @@ public:
                      uint32_t   padding);
 
     ~llama_kv_cache_unified() = default;
-
-    // Note: The value of head isn't only used to optimize searching
-    // for a free KV slot. llama_decode_impl also uses it, so it
-    // cannot be freely changed after a slot has been allocated.
-    uint32_t head = 0;
-    uint32_t size = 0;
-    uint32_t used = 0; // used cells (i.e. at least one seq_id)
-
-    // computed before each graph build
-    uint32_t n = 0;
 
     //
     // llama_memory_i
@@ -187,7 +147,7 @@ public:
 
     bool get_can_shift() const override;
 
-    const kv_layer & get_layer(int32_t il) const;
+    uint32_t get_n() const;
 
     ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
     ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
@@ -210,11 +170,51 @@ private:
     const llama_model & model;
     const llama_hparams & hparams;
 
+    // commit/restore cache
+    struct slot_range {
+        uint32_t c0 = 0; // note: these are cell indices, not sequence positions
+        uint32_t c1 = 0;
+    };
+
+    struct kv_cell {
+        llama_pos pos   = -1;
+        llama_pos delta =  0;
+
+        std::set<llama_seq_id> seq_id;
+
+        bool has_seq_id(const llama_seq_id & id) const {
+            return seq_id.find(id) != seq_id.end();
+        }
+
+        bool is_empty() const {
+            return seq_id.empty();
+        }
+
+        bool is_same_seq(const kv_cell & other) const {
+            return seq_id == other.seq_id;
+        }
+    };
+
+    struct kv_layer {
+        ggml_tensor * k = nullptr;
+        ggml_tensor * v = nullptr;
+    };
+
     bool has_shift = false;
     bool do_defrag = false;
 
     bool v_trans   = true;  // the value tensor is transposed
     bool can_shift = false;
+
+    // Note: The value of head isn't only used to optimize searching
+    // for a free KV slot. llama_decode_impl also uses it, so it
+    // cannot be freely changed after a slot has been allocated.
+    uint32_t head = 0;
+    uint32_t size = 0;
+    uint32_t used = 0; // used cells (i.e. at least one seq_id)
+
+    // computed before each graph build
+    uint32_t n = 0;
 
     // required padding
     uint32_t padding = 1;
@@ -279,9 +279,9 @@ private:
 // llama_kv_cache_unified_swa
 //
 
-//class llama_kv_cache_unified_swa : public llama_kv_cache {
-//public:
-//};
+class llama_kv_cache_unified_swa : public llama_kv_cache {
+public:
+};
 
 //
 // llama_kv_cache_recurrent

@@ -151,7 +151,7 @@ llama_kv_cache_unified::llama_kv_cache_unified(
 }
 
 void llama_kv_cache_unified::clear() {
-    for (int32_t i = 0; i < (int32_t) size; ++i) {
+    for (uint32_t i = 0; i < size; ++i) {
         cells[i].pos = -1;
         cells[i].seq_id.clear();
     }
@@ -561,8 +561,8 @@ bool llama_kv_cache_unified::get_can_shift() const {
     return can_shift;
 }
 
-const llama_kv_cache_unified::kv_layer & llama_kv_cache_unified::get_layer(int32_t il) const {
-    return layers[il];
+uint32_t llama_kv_cache_unified::get_n() const {
+    return n;
 }
 
 ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t il) const {
