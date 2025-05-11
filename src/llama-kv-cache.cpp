@@ -1579,7 +1579,7 @@ llama_kv_cache_unified_iswa::llama_kv_cache_unified_iswa(
     llama_kv_cache_unified::layer_filter_cb filter_swa  = [&](int32_t il) { return  model.hparams.is_swa(il); };
 
     const uint32_t kv_size_base = kv_size;
-    const uint32_t kv_size_swa  = std::min(kv_size, hparams.n_swa*n_seq_max + n_batch);
+    const uint32_t kv_size_swa  = std::min(kv_size, GGML_PAD(hparams.n_swa*n_seq_max + n_batch + 1, padding));
 
     kv_base = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_base), type_k, type_v, v_trans, offload, kv_size_base, padding);
     kv_swa  = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_swa),  type_k, type_v, v_trans, offload, kv_size_swa,  padding);
