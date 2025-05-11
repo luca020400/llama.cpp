@@ -559,6 +559,10 @@ uint32_t llama_kv_cache_unified::get_n() const {
     return n;
 }
 
+uint32_t llama_kv_cache_unified::get_size() const {
+    return size;
+}
+
 ggml_tensor * llama_kv_cache_unified::get_k(ggml_context * ctx, int32_t il) const {
     const int32_t ikv = map_layer_ids.at(il);
 
@@ -1568,16 +1572,14 @@ llama_kv_cache_unified_iswa::llama_kv_cache_unified_iswa(
                      bool   v_trans,
                      bool   offload,
                  uint32_t   kv_size,
+                 uint32_t   n_seq_max,
+                 uint32_t   n_batch,
                  uint32_t   padding) : hparams(model.hparams) {
     llama_kv_cache_unified::layer_filter_cb filter_base = [&](int32_t il) { return !model.hparams.is_swa(il); };
     llama_kv_cache_unified::layer_filter_cb filter_swa  = [&](int32_t il) { return  model.hparams.is_swa(il); };
 
-    // TODO: provide from the llama_context
-    const uint32_t n_seq_max = 1;
-    const uint32_t n_batch   = hparams.n_swa;
-
     const uint32_t kv_size_base = kv_size;
-    const uint32_t kv_size_swa  = (hparams.n_swa + n_batch)*n_seq_max;
+    const uint32_t kv_size_swa  = std::min(kv_size, hparams.n_swa*n_seq_max + n_batch);
 
     kv_base = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_base), type_k, type_v, v_trans, offload, kv_size_base, padding);
     kv_swa  = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_swa),  type_k, type_v, v_trans, offload, kv_size_swa,  padding);
@@ -1705,7 +1707,7 @@ llama_pos llama_kv_cache_unified_iswa::get_pos_max() const {
 }
 
 bool llama_kv_cache_unified_iswa::get_can_shift() const {
-    return false;
+    return kv_base->get_size() == kv_swa->get_size();
 }
 
 void llama_kv_cache_unified_iswa::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {

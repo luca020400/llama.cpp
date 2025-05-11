@@ -160,6 +160,7 @@ public:
     //
 
     uint32_t get_n() const;
+    uint32_t get_size() const;
 
     ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
     ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
@@ -301,6 +302,8 @@ public:
                          bool   v_trans,
                          bool   offload,
                      uint32_t   kv_size,
+                     uint32_t   n_seq_max,
+                     uint32_t   n_batch,
                      uint32_t   padding);
 
     ~llama_kv_cache_unified_iswa() = default;

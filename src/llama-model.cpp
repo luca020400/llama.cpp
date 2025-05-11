@@ -13031,6 +13031,8 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             !cparams.flash_attn,
                             cparams.offload_kqv,
                             cparams.n_ctx,
+                            cparams.n_seq_max,
+                            cparams.n_batch,
                             padding);
                 } else {
                     res = new llama_kv_cache_unified(
