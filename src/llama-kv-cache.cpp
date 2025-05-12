@@ -31,12 +31,6 @@ llama_kv_cache_unified::llama_kv_cache_unified(
                      bool    offload,
                  uint32_t    kv_size,
                  uint32_t    padding) : model(model), hparams(model.hparams), v_trans(v_trans), padding(padding) {
-    has_shift = false;
-    can_shift = true;
-
-    LLAMA_LOG_INFO("%s: kv_size = %d, type_k = '%s', type_v = '%s', n_layer = %d, can_shift = %d, padding = %d\n",
-            __func__, kv_size, ggml_type_name(type_k), ggml_type_name(type_v), hparams.n_layer, can_shift, padding);
-
     GGML_ASSERT(kv_size % padding == 0 && "kv_size must be a multiple of padding");
 
     this->type_k = type_k;
@@ -133,8 +127,8 @@ llama_kv_cache_unified::llama_kv_cache_unified(
         const size_t memory_size_k = size_k_bytes();
         const size_t memory_size_v = size_v_bytes();
 
-        LLAMA_LOG_INFO("%s: KV self size  = %7.2f MiB, K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
-                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f),
+        LLAMA_LOG_INFO("%s: size = %7.2f (%6d cells, %3d layers) MiB, K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
+                (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f), kv_size, (int) layers.size(),
                 ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
                 ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
     }
@@ -552,7 +546,7 @@ int32_t llama_kv_cache_unified::get_used_cells() const {
 }
 
 bool llama_kv_cache_unified::get_can_shift() const {
-    return can_shift;
+    return true;
 }
 
 uint32_t llama_kv_cache_unified::get_n() const {
@@ -759,6 +753,7 @@ llama_pos llama_kv_cache_unified::get_pos_max() const {
 
 size_t llama_kv_cache_unified::total_size() const {
     size_t size = 0;
+
     for (const auto & buf : bufs) {
         size += ggml_backend_buffer_get_size(buf.get());
     }
@@ -1581,7 +1576,12 @@ llama_kv_cache_unified_iswa::llama_kv_cache_unified_iswa(
     const uint32_t kv_size_base = kv_size;
     const uint32_t kv_size_swa  = std::min(kv_size, GGML_PAD(hparams.n_swa*n_seq_max + n_batch + 1, padding));
 
+    LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, kv_size_base);
+
     kv_base = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_base), type_k, type_v, v_trans, offload, kv_size_base, padding);
+
+    LLAMA_LOG_INFO("%s: creating     SWA KV cache, size = %u cells\n", __func__, kv_size_swa);
+
     kv_swa  = std::make_unique<llama_kv_cache_unified>(model, std::move(filter_swa),  type_k, type_v, v_trans, offload, kv_size_swa,  padding);
 }
 
@@ -2789,80 +2789,7 @@ void llama_kv_cache_view_free(llama_kv_cache_view * view) {
     }
 }
 
-void llama_kv_cache_view_update(llama_kv_cache_view * view, const llama_kv_cache * kv) {
-    // TODO: rework this in the future, for now quick hack
-    const llama_kv_cache_unified * kvu = dynamic_cast<const llama_kv_cache_unified *>(kv);
-    if (kvu == nullptr) {
-        LLAMA_LOG_ERROR("%s: the kv_cache_view currently works only with llama_kv_cache_unified\n", __func__);
-        return;
-    }
-
-    GGML_UNUSED(view);
-
-    return;
-    // TODO: rework
-
-    //const auto & cells = kvu->cells;
-
-    //if (uint32_t(view->n_cells) < cells->size || view->cells == nullptr) {
-    //    view->n_cells = int32_t(cells->size);
-    //    void * p = realloc(view->cells, sizeof(llama_kv_cache_view_cell) * view->n_cells);
-    //    GGML_ASSERT(p != nullptr && "Failed to alloc kv_cache_view cells");
-    //    view->cells = (llama_kv_cache_view_cell *)p;
-    //    p = realloc(view->cells_sequences, sizeof(llama_seq_id) * view->n_seq_max * view->n_cells);
-    //    GGML_ASSERT(p != nullptr && "Failed to alloc kv_cache_view cells sequences");
-    //    view->cells_sequences = (llama_seq_id *)p;
-    //}
-
-    //const auto & kv_cells = cells;
-    //llama_kv_cache_view_cell * c_curr = view->cells;
-    //llama_seq_id * cs_curr = view->cells_sequences;
-    //int32_t used_cells = 0;
-    //int32_t token_count = 0;
-    //int32_t curr_contig_idx = -1;
-    //uint32_t max_contig = 0;
-    //int32_t max_contig_idx = -1;
-
-    //for (int32_t i = 0; i < int32_t(cells->size); i++, c_curr++, cs_curr += view->n_seq_max) {
-    //    const size_t curr_size = kv_cells[i].seq_id.size();
-    //    token_count += curr_size;
-    //    c_curr->pos = kv_cells[i].pos + kv_cells[i].delta;
-
-    //    if (curr_size > 0) {
-    //        if (curr_contig_idx >= 0 && uint32_t(i - curr_contig_idx) > max_contig) {
-    //            max_contig = i - curr_contig_idx;
-    //            max_contig_idx = curr_contig_idx;
-    //        }
-    //        curr_contig_idx = -1;
-    //    } else if (curr_contig_idx < 0) {
-    //        curr_contig_idx = i;
-    //    }
-
-    //    int seq_idx = 0;
-    //    for (const llama_seq_id it : kv_cells[i].seq_id) {
-    //        if (seq_idx >= view->n_seq_max) {
-    //            break;
-    //        }
-    //        cs_curr[seq_idx] = it;
-    //        seq_idx++;
-    //    }
-    //    if (seq_idx != 0) {
-    //        used_cells++;
-    //    }
-    //    for (; seq_idx < view->n_seq_max; seq_idx++) {
-    //        cs_curr[seq_idx] = -1;
-    //    }
-    //}
-    //if (curr_contig_idx >= 0 && kv_cells.size() - curr_contig_idx > max_contig) {
-    //    max_contig_idx = curr_contig_idx;
-    //    max_contig = kv_cells.size() - curr_contig_idx;
-    //}
-    //view->max_contiguous = max_contig;
-    //view->max_contiguous_idx = max_contig_idx;
-    //view->token_count = token_count;
-    //view->used_cells = used_cells;
-    //if (uint32_t(used_cells) != cells->used) {
-    //    LLAMA_LOG_ERROR("%s: used cells mismatch. kv_cache says %d but we calculated %d\n",
-    //        __func__, cells->used, used_cells);
-    //}
+void llama_kv_cache_view_update(llama_kv_cache_view * , const llama_kv_cache * ) {
+    // TODO: will be removed soon, keep this for now to avoid too many changes in
+    //       https://github.com/ggml-org/llama.cpp/pull/13194
 }

@@ -88,11 +88,11 @@ private:
 // llama_kv_cache_unified
 //
 
-// TODO: add notion of max sequences
 class llama_kv_cache_unified : public llama_kv_cache {
 public:
     static uint32_t get_padding(const llama_cparams & cparams);
 
+    // this callback is used to filter out layers that should not be included in the cache
     using layer_filter_cb = std::function<bool(int32_t il)>;
 
     llama_kv_cache_unified(
@@ -162,15 +162,17 @@ public:
     uint32_t get_n() const;
     uint32_t get_size() const;
 
+    // get views of the current state of the cache
     ggml_tensor * get_k(ggml_context * ctx, int32_t il) const;
     ggml_tensor * get_v(ggml_context * ctx, int32_t il) const;
 
+    // store k_cur and v_cur in the cache based on the current head location
     ggml_tensor * cpy_k(ggml_context * ctx, ggml_tensor * k_cur, int32_t il) const;
     ggml_tensor * cpy_v(ggml_context * ctx, ggml_tensor * v_cur, int32_t il) const;
 
-    void set_input_kq_mask    (ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn, bool swa) const;
-    void set_input_k_shift    (ggml_tensor * dst) const;
-    void set_input_pos_bucket (ggml_tensor * dst, const llama_ubatch * ubatch) const;
+    void set_input_kq_mask   (ggml_tensor * dst, const llama_ubatch * ubatch, bool causal_attn, bool swa) const;
+    void set_input_k_shift   (ggml_tensor * dst) const;
+    void set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch * ubatch) const;
 
 private:
     const llama_model & model;
@@ -212,9 +214,7 @@ private:
 
     bool has_shift = false;
     bool do_defrag = false;
-
     bool v_trans   = true;  // the value tensor is transposed
-    bool can_shift = false;
 
     // Note: The value of head isn't only used to optimize searching
     // for a free KV slot. llama_decode_impl also uses it, so it
@@ -292,6 +292,10 @@ private:
 //
 // llama_kv_cache_unified_iswa
 //
+
+// utilizes two instances of llama_kv_cache_unified
+//   the first instance is for the non-SWA layers of the model and the second instance is for the SWA layers
+//   upon successful commit, the SWA cache removes old tokens outside the n_swa window
 
 class llama_kv_cache_unified_iswa : public llama_kv_cache {
 public:
