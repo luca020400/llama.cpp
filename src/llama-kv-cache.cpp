@@ -1574,7 +1574,7 @@ llama_kv_cache_unified_iswa::llama_kv_cache_unified_iswa(
     llama_kv_cache_unified::layer_filter_cb filter_swa  = [&](int32_t il) { return  model.hparams.is_swa(il); };
 
     const uint32_t kv_size_base = kv_size;
-    const uint32_t kv_size_swa  = std::min(kv_size, GGML_PAD(hparams.n_swa*n_seq_max + n_batch + 1, padding));
+    const uint32_t kv_size_swa  = std::min(kv_size, GGML_PAD(hparams.n_swa*n_seq_max + n_batch, padding));
 
     LLAMA_LOG_INFO("%s: creating non-SWA KV cache, size = %u cells\n", __func__, kv_size_base);
 
@@ -1639,7 +1639,7 @@ void llama_kv_cache_unified_iswa::commit() {
             continue;
         }
 
-        kv_swa->seq_rm(seq_id, -1, pos_max - hparams.n_swa);
+        kv_swa->seq_rm(seq_id, -1, pos_max - hparams.n_swa + 1);
     }
 
     pending.pos_max.clear();
