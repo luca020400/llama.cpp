@@ -329,14 +329,15 @@ function ChatInput({
           <div
             className="flex flex-col rounded-xl border-1 border-base-content/30 p-3 w-full"
             onPasteCapture={(e: ClipboardEvent<HTMLInputElement>) => {
-              Array.from(e.clipboardData.items)
+              const files = Array.from(e.clipboardData.items)
                 .filter((item) => item.kind === 'file')
                 .map((item) => item.getAsFile())
-                .forEach((file) => {
-                  if (file) {
-                    extraContext.onFileAdded([file]);
-                  }
-                });
+                .filter((file) => file !== null)
+
+              if (files.length > 0) {
+                e.preventDefault();
+                extraContext.onFileAdded(files);
+              }
             }}
             {...getRootProps()}
           >
