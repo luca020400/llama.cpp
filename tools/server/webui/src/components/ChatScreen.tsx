@@ -332,7 +332,7 @@ function ChatInput({
               const files = Array.from(e.clipboardData.items)
                 .filter((item) => item.kind === 'file')
                 .map((item) => item.getAsFile())
-                .filter((file) => file !== null)
+                .filter((file) => file !== null);
 
               if (files.length > 0) {
                 e.preventDefault();
