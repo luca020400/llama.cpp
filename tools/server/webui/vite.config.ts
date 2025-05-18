@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import path from 'node:path';
 import fs from 'node:fs';
-import * as fflate from 'fflate';
+import zlib from 'node:zlib';
 
 /* eslint-disable */
 
@@ -36,18 +36,14 @@ const BUILD_PLUGINS = [
         let content =
           GUIDE_FOR_FRONTEND + '\n' + fs.readFileSync(outputIndexHtml, 'utf-8');
         content = content.replace(/\r/g, ''); // remove windows-style line endings
-        const compressed = fflate.gzipSync(Buffer.from(content, 'utf-8'), {
-          level: 9,
+        const compressed = zlib.brotliCompressSync(Buffer.from(content), {
+          params: {
+            [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+            [zlib.constants.BROTLI_PARAM_QUALITY]:
+              zlib.constants.BROTLI_MAX_QUALITY,
+            [zlib.constants.BROTLI_PARAM_SIZE_HINT]: content.length,
+          },
         });
-
-        // because gzip header contains machine-specific info, we must remove these data from the header
-        // timestamp
-        compressed[0x4] = 0;
-        compressed[0x5] = 0;
-        compressed[0x6] = 0;
-        compressed[0x7] = 0;
-        // OS
-        compressed[0x9] = 0;
 
         if (compressed.byteLength > MAX_BUNDLE_SIZE) {
           throw new Error(
@@ -58,7 +54,7 @@ const BUILD_PLUGINS = [
 
         const targetOutputFile = path.join(
           config.build.outDir,
-          '../../public/index.html.gz'
+          '../../public/index.html.br'
         );
         fs.writeFileSync(targetOutputFile, compressed);
       },

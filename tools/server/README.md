@@ -270,11 +270,11 @@ npm i
 # to run the dev server
 npm run dev
 
-# to build the public/index.html.gz
+# to build the public/index.html.br
 npm run build
 ```
-After `public/index.html.gz` has been generated we need to generate the c++
-headers (like build/tools/server/index.html.gz.hpp) that will be included
+After `public/index.html.br` has been generated we need to generate the c++
+headers (like build/tools/server/index.html.br.hpp) that will be included
 by server.cpp. This is done by building `llama-server` as described in the
 [build](#build) section above.
 
